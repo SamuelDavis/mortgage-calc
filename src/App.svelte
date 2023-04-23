@@ -6,7 +6,7 @@
   const principal = derived(
     [purchasePrice, downPayment],
     ([purchasePrice, downPayment]) =>
-      downPayment > 1
+      purchasePrice - downPayment > 1
         ? purchasePrice - downPayment
         : purchasePrice * downPayment
   );
