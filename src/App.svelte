@@ -15,30 +15,65 @@
     [annualInterestRate],
     ([annualInterestRate]) => annualInterestRate / 12
   );
+  const annualPmiRate = writable(0.0058);
+  const privateMortgageInsurance = derived(
+    [principal, downPayment, annualPmiRate],
+    ([principal, downPayment, annualPmiRate]) => {
+      if (downPayment > 1) downPayment /= principal;
+      if (downPayment >= 0.2) return 0;
+      return (principal * annualPmiRate) / 12;
+    }
+  );
   const monthlyPayment = writable(
     Math.ceil($principal * $monthlyInterestRate * 1.2)
   );
   const amortization = derived(
-    [principal, monthlyInterestRate, monthlyPayment],
-    ([principal, monthlyInterestRate, monthlyPayment]) => {
+    [
+      purchasePrice,
+      principal,
+      monthlyInterestRate,
+      monthlyPayment,
+      privateMortgageInsurance,
+    ],
+    ([
+      purchasePrice,
+      principal,
+      monthlyInterestRate,
+      monthlyPayment,
+      pmiPayment,
+    ]) => {
+      const originalPrincipal = principal;
       let schedule: any[] = [];
-      let totalInterest = 0;
-      let totalPrincipal = 0;
+      let interestTotal = 0;
+      let principalTotal = 0;
+      let pmiTotal = 0;
+      let equity = 0;
       while (principal > 0) {
+        equity = 1 - principal / purchasePrice;
+        if (principal / originalPrincipal < 0.8) pmiPayment = 0;
         const interestPayment = principal * monthlyInterestRate;
         const principalPayment = Math.min(
           principal,
-          monthlyPayment - interestPayment
+          monthlyPayment - interestPayment - pmiPayment
         );
-        if (principalPayment <= 0) return [];
-        principal -= principalPayment;
-        totalInterest += interestPayment;
-        totalPrincipal += principalPayment;
-        schedule.push([
-          totalInterest,
-          totalPrincipal,
+        console.debug({
           interestPayment,
           principalPayment,
+          pmiPayment,
+        });
+        if (principalPayment <= 0) return [];
+        principal -= principalPayment;
+        interestTotal += interestPayment;
+        principalTotal += principalPayment;
+        pmiTotal += pmiPayment;
+        schedule.push([
+          interestTotal,
+          pmiTotal,
+          principalTotal,
+          interestPayment,
+          pmiPayment,
+          principalPayment,
+          equity,
         ]);
       }
       return schedule;
@@ -47,10 +82,10 @@
   const totals = derived([amortization], ([amortization]) => {
     const months = amortization.length + 1;
     const years = Math.ceil(months / 12);
-    const interest =
-      amortization.length === 0 ? 0 : amortization[amortization.length - 1][0];
+    const [interest, pmi] =
+      amortization.length > 0 ? amortization[amortization.length - 1] : [0, 0];
 
-    return { months, years, interest };
+    return { months, years, interest, pmi };
   });
 
   function formatNumber(value: number): string {
@@ -77,6 +112,15 @@
           max="1"
           min="0"
           step="0.0025"
+          type="number"
+        />
+      </label>
+      <label>
+        PMI Rate <input
+          bind:value={$annualPmiRate}
+          max="1"
+          min="0"
+          step="0.0005"
           type="number"
         />
       </label>
@@ -108,6 +152,10 @@
         <output>{formatNumber($totals.interest)}</output>
       </label>
       <label>
+        <span>PMI</span>
+        <output>{formatNumber($totals.pmi)}</output>
+      </label>
+      <label>
         Months
         <output>{$totals.months.toLocaleString()}</output>
       </label>
@@ -122,9 +170,12 @@
     <thead>
       <tr>
         <th>Interest Total</th>
+        <th>PMI Total</th>
         <th>Principal Total</th>
         <th>Interest Payment</th>
+        <th>PMI Payment</th>
         <th>Principal Payment</th>
+        <th>Equity</th>
         <th>Months</th>
         <th>Years</th>
       </tr>
@@ -149,9 +200,14 @@
     display: flex;
   }
 
+  input {
+    width: 10ch;
+  }
+
   label {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
+    place-content: start;
     gap: 0.5em;
   }
 
