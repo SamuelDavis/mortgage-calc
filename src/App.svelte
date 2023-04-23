@@ -6,202 +6,163 @@
   const principal = derived(
     [purchasePrice, downPayment],
     ([purchasePrice, downPayment]) =>
-      purchasePrice - downPayment > 1
-        ? purchasePrice - downPayment
-        : purchasePrice * downPayment
+      downPayment < 1
+        ? purchasePrice - purchasePrice * downPayment
+        : purchasePrice - downPayment
   );
   const annualInterestRate = writable(0.065);
   const monthlyInterestRate = derived(
     [annualInterestRate],
-    ([value]) => value / 12
+    ([annualInterestRate]) => annualInterestRate / 12
   );
-  const monthlyPayment = writable(2000);
+  const monthlyPayment = writable(
+    Math.ceil($principal * $monthlyInterestRate * 1.2)
+  );
   const amortization = derived(
     [principal, monthlyInterestRate, monthlyPayment],
     ([principal, monthlyInterestRate, monthlyPayment]) => {
-      monthlyPayment = Math.max(
-        principal * monthlyInterestRate + 1,
-        monthlyPayment
-      );
-
-      let schedule: [number, number, number, number][] = [];
-      let interestTotal = 0;
-      let principalTotal = 0;
+      let schedule: any[] = [];
+      let totalInterest = 0;
+      let totalPrincipal = 0;
       while (principal > 0) {
         const interestPayment = principal * monthlyInterestRate;
         const principalPayment = Math.min(
           principal,
           monthlyPayment - interestPayment
         );
+        if (principalPayment <= 0) return [];
         principal -= principalPayment;
-        interestTotal += interestPayment;
-        principalTotal += principalPayment;
+        totalInterest += interestPayment;
+        totalPrincipal += principalPayment;
         schedule.push([
+          totalInterest,
+          totalPrincipal,
           interestPayment,
-          interestTotal,
           principalPayment,
-          principalTotal,
         ]);
       }
-
       return schedule;
     }
   );
   const totals = derived([amortization], ([amortization]) => {
-    const [, interest] = amortization[amortization.length - 1] ?? [
-      undefined,
-      0,
-    ];
-    return {
-      months: amortization.length + 1,
-      years: Math.ceil((amortization.length + 1) / 12),
-      interest,
-    };
+    const months = amortization.length + 1;
+    const years = Math.ceil(months / 12);
+    const interest =
+      amortization.length === 0 ? 0 : amortization[amortization.length - 1][0];
+
+    return { months, years, interest };
   });
 
-  function formatNumber(number: number) {
-    const [value, fraction] = number
-      .toFixed(2)
-      .split(".")
-      .map((n) => parseInt(n));
-    return `${value.toLocaleString()}.${fraction}`;
+  function formatNumber(value: number): string {
+    const [integerPart, fractionPart] = value.toFixed(2).split(".");
+    return `${parseInt(integerPart, 10).toLocaleString()}.${fractionPart}`;
   }
 </script>
 
 <main>
   <form on:submit|preventDefault>
-    <label>
-      Purchase Price <input
-        bind:value={$purchasePrice}
-        class="dollar"
-        min="0"
-        step="0.01"
-        type="number"
-      />
-    </label>
-    <label>
-      Down Payment <input
-        bind:value={$downPayment}
-        class="percent"
-        type="number"
-      />
-    </label>
-    <label>
-      Monthly Payment <input
-        bind:value={$monthlyPayment}
-        class="dollar"
-        min={$monthlyInterestRate * $principal}
-        step="50"
-        type="number"
-      />
-    </label>
-    <label>
-      Annual Interest Rate <input
-        bind:value={$annualInterestRate}
-        class="percent"
-        min="0"
-        step="0.01"
-        type="number"
-      />
-    </label>
+    <fieldset>
+      <legend>Input</legend>
+      <label>
+        <span>Purchase Price</span>
+        <input bind:value={$purchasePrice} min="0" step="1" type="number" />
+      </label>
+      <label>
+        <span>Down Payment</span>
+        <input bind:value={$downPayment} min="0" step="0.05" type="number" />
+      </label>
+      <label>
+        Interest Rate <input
+          bind:value={$annualInterestRate}
+          max="1"
+          min="0"
+          step="0.0025"
+          type="number"
+        />
+      </label>
+      <label>
+        Monthly Payment <input
+          bind:value={$monthlyPayment}
+          min="0"
+          step="100"
+          type="number"
+        />
+      </label>
+    </fieldset>
     <fieldset>
       <legend>Summary</legend>
       <label>
-        Down Payment
-        {#if $downPayment < 1}
-          $
-          <output>
-            {formatNumber($purchasePrice * $downPayment)}
-          </output>
-        {:else}
-          %
-          <output>{formatNumber(($downPayment / $purchasePrice) * 100)}</output>
-        {/if}
+        <span>Principal</span>
+        <output>{formatNumber($principal)}</output>
+      </label>
+      <label>
+        <span>Down Payment</span>
+        <output>
+          {$downPayment < 1
+            ? formatNumber($purchasePrice * $downPayment)
+            : ($downPayment / $purchasePrice).toFixed(2)}
+        </output>
+      </label>
+      <label>
+        <span>Interest</span>
+        <output>{formatNumber($totals.interest)}</output>
       </label>
       <label>
         Months
-        <output>{$totals.months}</output>
+        <output>{$totals.months.toLocaleString()}</output>
       </label>
       <label>
         Years
-        <output>{$totals.years}</output>
-      </label>
-      <label>
-        Interest
-        <output class="dollar">{formatNumber($totals.interest)}</output>
+        <output>{$totals.years.toLocaleString()}</output>
       </label>
     </fieldset>
   </form>
-
   <hr />
-
   <table>
     <thead>
       <tr>
-        <th>Interest Payment</th>
         <th>Interest Total</th>
-        <th>Principal Payment</th>
         <th>Principal Total</th>
-        <th>Month</th>
-        <th>Year</th>
+        <th>Interest Payment</th>
+        <th>Principal Payment</th>
+        <th>Months</th>
+        <th>Years</th>
       </tr>
     </thead>
     <tbody>
-      {#each $amortization as values, month}
-        <tr class:year={(month + 1) % 12 === 0}>
+      {#each $amortization as values, i}
+        <tr>
           {#each values as value}
             <td>{formatNumber(value)}</td>
           {/each}
-          <td>{month + 1}</td>
-          <td>{Math.ceil((month + 1) / 12)}</td>
+          <td>{i + 1}</td>
+          <td>{Math.ceil((i + 1) / 12)}</td>
         </tr>
       {/each}
     </tbody>
   </table>
 </main>
 
-<style lang="css">
-  .dollar::before {
-    content: "$";
-  }
-
-  .percent::before {
-    content: "%";
-  }
-
+<style>
   form {
-    width: fit-content;
+    max-width: fit-content;
+    display: flex;
   }
 
   label {
     display: grid;
-    justify-content: space-between;
-    gap: 1em;
     grid-template-columns: repeat(2, 1fr);
+    gap: 0.5em;
   }
 
   table {
     border-collapse: collapse;
-    position: relative;
-  }
-
-  thead {
-    position: sticky;
-    top: 0;
-    background-color: white;
   }
 
   th,
   td {
     border: 1px solid black;
-    padding: 0.25em;
-  }
-
-  tr.year {
-    background-color: lightgray;
-  }
-
-  td {
+    padding: 0.5em;
     text-align: right;
   }
 </style>
